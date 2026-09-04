@@ -3,68 +3,79 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>リアルタイムカメラ送信</title>
+  <title>クラウドモニタリング - カメラ</title>
   <style>
-    body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; }
-    video { width: 100%; max-width: 500px; border-radius: 8px; border: 2px solid #ccc; }
-    #status { margin-top: 15px; font-weight: bold; color: #333; }
+    body { font-family: sans-serif; text-align: center; padding: 20px; background: #f0f4f8; }
+    #video { width: 100%; max-width: 600px; border-radius: 8px; background: #000; }
+    #status { margin-top: 15px; font-weight: bold; font-size: 1.2em; color: #333; }
   </style>
 </head>
 <body>
-  <h2>📷 混雑度モニタリングカメラ</h2>
+  <h2>📷 混雑監視カメラ</h2>
   <video id="video" autoplay playsinline muted></video>
-  <canvas id="canvas" style="display:none;"></canvas>
   <div id="status">カメラ起動中...</div>
 
   <script>
     const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
     const statusDiv = document.getElementById('status');
 
-    // 1. カメラの起動
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      .then(stream => {
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         video.srcObject = stream;
-        statusDiv.innerText = "カメラ接続完了。解析を開始します...";
-        // 5秒ごとに画像をVercelに送信
-        setInterval(captureAndSend, 5000);
-      })
-      .catch(err => {
-        console.error("カメラアクセスエラー:", err);
-        statusDiv.innerText = "エラー: カメラへのアクセスが拒否されました。";
-      });
+        statusDiv.innerText = 'カメラ接続完了。解析を開始します...';
+        
+        // カメラ映像の準備ができるまで待ってから5秒周期で送信を開始
+        video.onloadedmetadata = () => {
+          setInterval(captureAndSend, 5000);
+        };
+      } catch (err) {
+        console.error('カメラ起動エラー:', err);
+        statusDiv.innerText = 'エラー: カメラへのアクセスが拒否されたか利用できません。';
+      }
+    }
 
-    // 2. 画像撮影とVercelへの送信
     async function captureAndSend() {
-      if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+      // カメラの映像サイズが正しく取得できていない場合はスキップ
+      if (!video.videoWidth || !video.videoHeight) {
+        statusDiv.innerText = 'カメラ映像を待機中...';
+        return;
+      }
 
+      const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Base64に変換し、ヘッダーを削除
-      const base64Image = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+      // JPEG形式でBase64画像データを生成
+      const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+      statusDiv.innerText = '画像解析中...';
 
       try {
-        statusDiv.innerText = "画像解析中...";
-        const response = await fetch('/api/crowd', {
+        const res = await fetch('/api/crowd', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: base64Image })
+          headers: {
+            'Content-Type': 'application/json' // ← VercelがJSONとして受取るために必須
+          },
+          body: JSON.stringify({ image: imageData })
         });
 
-        const data = await response.json();
-        if (data.success) {
+        const data = await res.json();
+
+        if (res.ok && data.success) {
           statusDiv.innerText = `解析成功！ 現在の検出人数: ${data.count}人`;
         } else {
           statusDiv.innerText = `解析エラー: ${data.error || '不明なエラー'}`;
         }
-      } catch (error) {
-        console.error("送信エラー:", error);
-        statusDiv.innerText = "送信失敗: サーバー通信エラー";
+      } catch (err) {
+        console.error('送信エラー:', err);
+        statusDiv.innerText = `送信エラー: ${err.message}`;
       }
     }
+
+    startCamera();
   </script>
 </body>
 </html>
