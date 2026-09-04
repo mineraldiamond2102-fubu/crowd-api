@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ローカル解析混雑監視 - カメラ</title>
+  <title>ローカル解析混雑監視 - カメラ（平均値送信）</title>
   <style>
     body { font-family: sans-serif; text-align: center; padding: 20px; background: #f0f4f8; }
     #video { width: 100%; max-width: 600px; border-radius: 8px; background: #000; }
@@ -16,24 +16,28 @@
 </head>
 <body>
   <h2>🔒 ローカル解析・混雑監視カメラ</h2>
-  <p style="font-size: 0.9em; color: #666;">※画像データは外部へ一切送信されず、端末内で安全に処理されます。</p>
+  <p style="font-size: 0.9em; color: #666;">※複数回の計測結果の平均値を集計して送信用データを生成します。</p>
   
   <video id="video" autoplay playsinline muted></video>
   <div id="status">AIモデルを読み込み中...</div>
 
   <script>
     // ★ご自身のGASのWebアプリURLを設定してください
-    const GAS_URL = 'https://script.google.com/macros/s/AKfycbyxi-Nh1zXLuYWHCXeLugEIMMUt4VEQBEiqG8hl1Kg5/dev';
+    const GAS_URL = 'YOUR_GAS_WEBAPP_URL';
+
+    // 集計設定
+    const SAMPLE_INTERVAL_MS = 5000; // 測定間隔: 5秒ごと
+    const SAMPLES_TO_AVERAGE = 6;    // 平均を取る回数: 6回 (5秒×6回 = 30秒ごとに送信)
 
     const video = document.getElementById('video');
     const statusDiv = document.getElementById('status');
     let model = null;
+    let countBuffer = [];            // 計測データを一時保存する配列
 
     // AIモデルのロードとカメラの起動
     async function init() {
       try {
         statusDiv.innerText = 'AIモデル（COCO-SSD）を読み込み中...';
-        // ブラウザ上でモデルを読み込む（初回のみ軽量モデルをロード）
         model = await cocoSsd.load();
         statusDiv.innerText = 'カメラを起動中...';
 
@@ -41,9 +45,8 @@
         video.srcObject = stream;
         
         video.onloadedmetadata = () => {
-          statusDiv.innerText = 'カメラ接続完了。ローカル解析を開始します...';
-          // 5秒周期で端末内AI解析を実施
-          setInterval(detectAndSend, 5000);
+          statusDiv.innerText = 'カメラ接続完了。計測を開始します...';
+          setInterval(detectAndAggregate, SAMPLE_INTERVAL_MS);
         };
       } catch (err) {
         console.error('初期化エラー:', err);
@@ -51,36 +54,47 @@
       }
     }
 
-    // ブラウザ内で画像を解析して「人数」だけをGASへ送信
-    async function detectAndSend() {
+    // 画像判定と平均値算出・送信処理
+    async function detectAndAggregate() {
       if (!model || !video.videoWidth || !video.videoHeight) return;
 
       try {
-        statusDiv.innerText = '端末内で画像解析中...';
-
-        // 1. ブラウザ内でAI判定（画像データは送信されない）
+        // 1. ブラウザ内でAI判定
         const predictions = await model.detect(video);
-        
-        // 2. 検出結果から「person（人）」だけをカウント
         const personPredictions = predictions.filter(p => p.class === 'person');
-        const count = personPredictions.length;
+        const currentCount = personPredictions.length;
 
-        statusDiv.innerText = `解析完了！ 現在の検出人数: ${count}人（GASへ送信中...）`;
+        // 配列に現在のカウントを追加
+        countBuffer.push(currentCount);
 
-        // 3. 数値とタイムスタンプのみをGASへ直接送信
-        if (GAS_URL && GAS_URL !== 'YOUR_GAS_WEBAPP_URL') {
-          await fetch(GAS_URL, {
-            method: 'POST',
-            mode: 'no-cors', // GASへのCORSクロスドメイン送信設定
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              count: count,
-              timestamp: new Date().toISOString()
-            })
-          });
-          statusDiv.innerText = `解析成功！ 現在の検出人数: ${count}人 (記録完了)`;
-        } else {
-          statusDiv.innerText = `解析成功！ 現在の検出人数: ${count}人 (GAS URL未設定)`;
+        statusDiv.innerText = `計測中 (${countBuffer.length}/${SAMPLES_TO_AVERAGE}回): 今回検出 ${currentCount}人`;
+
+        // 2. 指定回数（6回）に達したら平均値を計算して送信
+        if (countBuffer.length >= SAMPLES_TO_AVERAGE) {
+          const sum = countBuffer.reduce((acc, val) => acc + val, 0);
+          // 平均値を四捨五入して整数化（小数で残したい場合は Math.round を外してください）
+          const avgCount = Math.round(sum / countBuffer.length);
+
+          statusDiv.innerText = `過去${SAMPLES_TO_AVERAGE}回の平均 (${avgCount}人) をGASへ送信中...`;
+
+          // 3. 平均人数とタイムスタンプをGASへ送信
+          if (GAS_URL && GAS_URL !== 'YOUR_GAS_WEBAPP_URL') {
+            await fetch(GAS_URL, {
+              method: 'POST',
+              mode: 'no-cors',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                count: avgCount,
+                timestamp: new Date().toISOString()
+              })
+            });
+            statusDiv.innerText = `送信完了！ 平均人数: ${avgCount}人 (次回計測中...)`;
+          } else {
+            statusDiv.innerText = `計測成功！ 平均人数: ${avgCount}人 (GAS URL未設定)`;
+          }
+
+          // バッファをリセット
+          countBuffer = [];
         }
 
       } catch (err) {
@@ -88,6 +102,11 @@
         statusDiv.innerText = `エラー発生: ${err.message}`;
       }
     }
+
+    // 6時間ごとに自動リロードしてブラウザメモリをリフレッシュ
+    setTimeout(() => {
+      location.reload();
+    }, 6 * 60 * 60 * 1000);
 
     init();
   </script>
