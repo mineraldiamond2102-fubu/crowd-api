@@ -3,79 +3,93 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>クラウドモニタリング - カメラ</title>
+  <title>ローカル解析混雑監視 - カメラ</title>
   <style>
     body { font-family: sans-serif; text-align: center; padding: 20px; background: #f0f4f8; }
     #video { width: 100%; max-width: 600px; border-radius: 8px; background: #000; }
     #status { margin-top: 15px; font-weight: bold; font-size: 1.2em; color: #333; }
   </style>
+
+  <!-- ブラウザ内でAI物体検出を行うライブラリ (TensorFlow.js / COCO-SSD) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 </head>
 <body>
-  <h2>📷 混雑監視カメラ</h2>
+  <h2>🔒 ローカル解析・混雑監視カメラ</h2>
+  <p style="font-size: 0.9em; color: #666;">※画像データは外部へ一切送信されず、端末内で安全に処理されます。</p>
+  
   <video id="video" autoplay playsinline muted></video>
-  <div id="status">カメラ起動中...</div>
+  <div id="status">AIモデルを読み込み中...</div>
 
   <script>
+    // ★ご自身のGASのWebアプリURLを設定してください
+    const GAS_URL = 'YOUR_GAS_WEBAPP_URL';
+
     const video = document.getElementById('video');
     const statusDiv = document.getElementById('status');
+    let model = null;
 
-    async function startCamera() {
+    // AIモデルのロードとカメラの起動
+    async function init() {
       try {
+        statusDiv.innerText = 'AIモデル（COCO-SSD）を読み込み中...';
+        // ブラウザ上でモデルを読み込む（初回のみ軽量モデルをロード）
+        model = await cocoSsd.load();
+        statusDiv.innerText = 'カメラを起動中...';
+
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         video.srcObject = stream;
-        statusDiv.innerText = 'カメラ接続完了。解析を開始します...';
         
-        // カメラ映像の準備ができるまで待ってから5秒周期で送信を開始
         video.onloadedmetadata = () => {
-          setInterval(captureAndSend, 5000);
+          statusDiv.innerText = 'カメラ接続完了。ローカル解析を開始します...';
+          // 5秒周期で端末内AI解析を実施
+          setInterval(detectAndSend, 5000);
         };
       } catch (err) {
-        console.error('カメラ起動エラー:', err);
-        statusDiv.innerText = 'エラー: カメラへのアクセスが拒否されたか利用できません。';
+        console.error('初期化エラー:', err);
+        statusDiv.innerText = `エラー: ${err.message}`;
       }
     }
 
-    async function captureAndSend() {
-      // カメラの映像サイズが正しく取得できていない場合はスキップ
-      if (!video.videoWidth || !video.videoHeight) {
-        statusDiv.innerText = 'カメラ映像を待機中...';
-        return;
-      }
-
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      // JPEG形式でBase64画像データを生成
-      const imageData = canvas.toDataURL('image/jpeg', 0.8);
-
-      statusDiv.innerText = '画像解析中...';
+    // ブラウザ内で画像を解析して「人数」だけをGASへ送信
+    async function detectAndSend() {
+      if (!model || !video.videoWidth || !video.videoHeight) return;
 
       try {
-        const res = await fetch('/api/crowd', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json' // ← VercelがJSONとして受取るために必須
-          },
-          body: JSON.stringify({ image: imageData })
-        });
+        statusDiv.innerText = '端末内で画像解析中...';
 
-        const data = await res.json();
+        // 1. ブラウザ内でAI判定（画像データは送信されない）
+        const predictions = await model.detect(video);
+        
+        // 2. 検出結果から「person（人）」だけをカウント
+        const personPredictions = predictions.filter(p => p.class === 'person');
+        const count = personPredictions.length;
 
-        if (res.ok && data.success) {
-          statusDiv.innerText = `解析成功！ 現在の検出人数: ${data.count}人`;
+        statusDiv.innerText = `解析完了！ 現在の検出人数: ${count}人（GASへ送信中...）`;
+
+        // 3. 数値とタイムスタンプのみをGASへ直接送信
+        if (GAS_URL && GAS_URL !== 'YOUR_GAS_WEBAPP_URL') {
+          await fetch(GAS_URL, {
+            method: 'POST',
+            mode: 'no-cors', // GASへのCORSクロスドメイン送信設定
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              count: count,
+              timestamp: new Date().toISOString()
+            })
+          });
+          statusDiv.innerText = `解析成功！ 現在の検出人数: ${count}人 (記録完了)`;
         } else {
-          statusDiv.innerText = `解析エラー: ${data.error || '不明なエラー'}`;
+          statusDiv.innerText = `解析成功！ 現在の検出人数: ${count}人 (GAS URL未設定)`;
         }
+
       } catch (err) {
-        console.error('送信エラー:', err);
-        statusDiv.innerText = `送信エラー: ${err.message}`;
+        console.error('解析/送信エラー:', err);
+        statusDiv.innerText = `エラー発生: ${err.message}`;
       }
     }
 
-    startCamera();
+    init();
   </script>
 </body>
 </html>
