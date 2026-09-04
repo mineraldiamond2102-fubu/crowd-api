@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>リアルタイムカメラ送信</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; }
+    video { width: 100%; max-width: 500px; border-radius: 8px; border: 2px solid #ccc; }
+    #status { margin-top: 15px; font-weight: bold; color: #333; }
+  </style>
+</head>
+<body>
+  <h2>📷 混雑度モニタリングカメラ</h2>
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+  <div id="status">カメラ起動中...</div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const statusDiv = document.getElementById('status');
+
+    // 1. カメラの起動
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(stream => {
+        video.srcObject = stream;
+        statusDiv.innerText = "カメラ接続完了。解析を開始します...";
+        // 5秒ごとに画像をVercelに送信
+        setInterval(captureAndSend, 5000);
+      })
+      .catch(err => {
+        console.error("カメラアクセスエラー:", err);
+        statusDiv.innerText = "エラー: カメラへのアクセスが拒否されました。";
+      });
+
+    // 2. 画像撮影とVercelへの送信
+    async function captureAndSend() {
+      if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Base64に変換し、ヘッダーを削除
+      const base64Image = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+      try {
+        statusDiv.innerText = "画像解析中...";
+        const response = await fetch('/api/crowd', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageBase64: base64Image })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+          statusDiv.innerText = `解析成功！ 現在の検出人数: ${data.count}人`;
+        } else {
+          statusDiv.innerText = `解析エラー: ${data.error || '不明なエラー'}`;
+        }
+      } catch (error) {
+        console.error("送信エラー:", error);
+        statusDiv.innerText = "送信失敗: サーバー通信エラー";
+      }
+    }
+  </script>
+</body>
+</html>
