@@ -3,38 +3,42 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ローカル解析混雑監視 - カメラ（平均値送信）</title>
+  <title>混雑状況自動判定・送信カメラ</title>
   <style>
     body { font-family: sans-serif; text-align: center; padding: 20px; background: #f0f4f8; }
     #video { width: 100%; max-width: 600px; border-radius: 8px; background: #000; }
     #status { margin-top: 15px; font-weight: bold; font-size: 1.2em; color: #333; }
   </style>
 
-  <!-- ブラウザ内でAI物体検出を行うライブラリ (TensorFlow.js / COCO-SSD) -->
+  <!-- ブラウザ内でAI物体検出を行うライブラリ -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 </head>
 <body>
-  <h2>🔒 ローカル解析・混雑監視カメラ</h2>
-  <p style="font-size: 0.9em; color: #666;">※複数回の計測結果の平均値を集計して送信用データを生成します。</p>
+  <h2>混雑状況自動判定・送信カメラ</h2>
+  <p style="font-size: 0.9em; color: #666;">※AIが人数を測定し、混雑度テキストに変換して自動送信します。</p>
   
   <video id="video" autoplay playsinline muted></video>
   <div id="status">AIモデルを読み込み中...</div>
 
   <script>
-    // ★ご自身のGASのWebアプリURLを設定してください
     const GAS_URL = 'https://script.google.com/macros/s/AKfycby7vBvKMeDrgAccY6cH0GcpAP3ooKChGCO8m0Tc8axinC6wGVvkce3eVa8ppUEYxVGnjQ/exec';
 
+    // ★基本設定
+    const CLASS_NAME = '1年1組';             // クラス・団体名
+    const THRESHOLD_SLIGHTLY_CROWDED = 5;  // 3人以上で「やや混雑」
+    const THRESHOLD_CROWDED = 10;           // 6人以上で「混雑」
+
     // 集計設定
-    const SAMPLE_INTERVAL_MS = 5000; // 測定間隔: 5秒ごと
-    const SAMPLES_TO_AVERAGE = 6;    // 平均を取る回数: 6回 (5秒×6回 = 30秒ごとに送信)
+    const SAMPLE_INTERVAL_MS = 5000; // 5秒ごとに計測
+    const SAMPLES_TO_AVERAGE = 36;    // 6回 (30秒間) の平均値を使用
 
     const video = document.getElementById('video');
     const statusDiv = document.getElementById('status');
     let model = null;
-    let countBuffer = [];            // 計測データを一時保存する配列
+    let countBuffer = [];
 
-    // AIモデルのロードとカメラの起動
+    // 初期化処理
     async function init() {
       try {
         statusDiv.innerText = 'AIモデル（COCO-SSD）を読み込み中...';
@@ -54,46 +58,59 @@
       }
     }
 
-    // 画像判定と平均値算出・送信処理
+    // AI解析と自動判定・送信
     async function detectAndAggregate() {
       if (!model || !video.videoWidth || !video.videoHeight) return;
 
       try {
-        // 1. ブラウザ内でAI判定
+        // 1. ブラウザ内で人物検出
         const predictions = await model.detect(video);
         const personPredictions = predictions.filter(p => p.class === 'person');
         const currentCount = personPredictions.length;
 
-        // 配列に現在のカウントを追加
         countBuffer.push(currentCount);
+        statusDiv.innerText = `計測中 (${countBuffer.length}/${SAMPLES_TO_AVERAGE}回): 今回 ${currentCount}人`;
 
-        statusDiv.innerText = `計測中 (${countBuffer.length}/${SAMPLES_TO_AVERAGE}回): 今回検出 ${currentCount}人`;
-
-        // 2. 指定回数（6回）に達したら平均値を計算して送信
+        // 2. 指定回数に達したら平均人数と混雑度ステータスを算出
         if (countBuffer.length >= SAMPLES_TO_AVERAGE) {
           const sum = countBuffer.reduce((acc, val) => acc + val, 0);
-          // 平均値を四捨五入して整数化（小数で残したい場合は Math.round を外してください）
           const avgCount = Math.round(sum / countBuffer.length);
 
-          statusDiv.innerText = `過去${SAMPLES_TO_AVERAGE}回の平均 (${avgCount}人) をGASへ送信中...`;
-
-          // 3. 平均人数とタイムスタンプをGASへ送信
-          if (GAS_URL && GAS_URL !== 'YOUR_GAS_WEBAPP_URL') {
-            await fetch(GAS_URL, {
-              method: 'POST',
-              mode: 'no-cors',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                count: avgCount,
-                timestamp: new Date().toISOString()
-              })
-            });
-            statusDiv.innerText = `送信完了！ 平均人数: ${avgCount}人 (次回計測中...)`;
-          } else {
-            statusDiv.innerText = `計測成功！ 平均人数: ${avgCount}人 (GAS URL未設定)`;
+          // 人数から混雑度テキストを判定
+          let congestionText = "空いている";
+          if (avgCount >= THRESHOLD_CROWDED) {
+            congestionText = "混雑";
+          } else if (avgCount >= THRESHOLD_SLIGHTLY_CROWDED) {
+            congestionText = "やや混雑";
           }
 
-          // バッファをリセット
+          statusDiv.innerText = `過去${SAMPLES_TO_AVERAGE}回の平均 (${avgCount}人 / ${congestionText}) を送信中...`;
+
+          // 3. URLSearchParams 形式でデータを生成してPOST送信
+          const params = new URLSearchParams({
+            className: CLASS_NAME,
+            congestion: congestionText,
+            notice: "",
+            reopenTime: ""
+          });
+
+          const response = await fetch(GAS_URL, {
+            method: "POST",
+            body: params
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTPエラー: ${response.status}`);
+          }
+
+          const result = await response.text();
+          if (result.trim() !== "OK") {
+            throw new Error(result || "GASから正常な応答がありませんでした");
+          }
+
+          statusDiv.innerText = `送信完了！ 判定: ${congestionText} (${avgCount}人) [次回計測中...]`;
+
+          // バッファリセット
           countBuffer = [];
         }
 
@@ -103,7 +120,7 @@
       }
     }
 
-    // 6時間ごとに自動リロードしてブラウザメモリをリフレッシュ
+    // 6時間ごとに自動リロード
     setTimeout(() => {
       location.reload();
     }, 6 * 60 * 60 * 1000);
