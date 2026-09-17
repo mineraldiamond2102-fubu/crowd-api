@@ -16,12 +16,13 @@
 </head>
 <body>
   <h2>混雑状況自動判定・送信カメラ</h2>
-  <p style="font-size: 0.9em; color: #666;">※AIが人数を測定し、混雑度テキストに変換して自動送信します。</p>
+  <p style="font-size: 0.9em; color: #666;">※AIが人数を測定し、3分間の平均から混雑度を自動判定・送信します。</p>
   
   <video id="video" autoplay playsinline muted></video>
   <div id="status">AIモデルを読み込み中...</div>
 
   <script>
+    // ★ご自身の最新GAS WebアプリURLを設定してください（末尾は /exec）
     const GAS_URL = 'https://script.google.com/macros/s/AKfycby7vBvKMeDrgAccY6cH0GcpAP3ooKChGCO8m0Tc8axinC6wGVvkce3eVa8ppUEYxVGnjQ/exec';
 
     // ★基本設定
@@ -29,9 +30,9 @@
     const THRESHOLD_SLIGHTLY_CROWDED = 5;  // 3人以上で「やや混雑」
     const THRESHOLD_CROWDED = 10;           // 6人以上で「混雑」
 
-    // 集計設定
+    // 集計設定（3分間隔）
     const SAMPLE_INTERVAL_MS = 5000; // 5秒ごとに計測
-    const SAMPLES_TO_AVERAGE = 6;    // 6回 (30秒間) の平均値を使用
+    const SAMPLES_TO_AVERAGE = 6;   // 36回 (5秒×36回 = 3分ごとに送信)
 
     const video = document.getElementById('video');
     const statusDiv = document.getElementById('status');
@@ -71,10 +72,13 @@
         countBuffer.push(currentCount);
         statusDiv.innerText = `計測中 (${countBuffer.length}/${SAMPLES_TO_AVERAGE}回): 今回 ${currentCount}人`;
 
-        // 2. 指定回数に達したら平均人数と混雑度ステータスを算出
+        // 2. 36回（3分）に達したら平均人数と混雑度ステータスを算出
         if (countBuffer.length >= SAMPLES_TO_AVERAGE) {
           const sum = countBuffer.reduce((acc, val) => acc + val, 0);
           const avgCount = Math.round(sum / countBuffer.length);
+
+          // 送信前に必ずバッファをリセット（エラー時の連続送信ループを防ぐ）
+          countBuffer = [];
 
           // 人数から混雑度テキストを判定
           let congestionText = "空いている";
@@ -84,7 +88,7 @@
             congestionText = "やや混雑";
           }
 
-          statusDiv.innerText = `過去${SAMPLES_TO_AVERAGE}回の平均 (${avgCount}人 / ${congestionText}) を送信中...`;
+          statusDiv.innerText = `過去3分間の平均 (${avgCount}人 / ${congestionText}) を送信中...`;
 
           // 3. URLSearchParams 形式でデータを生成してPOST送信
           const params = new URLSearchParams({
@@ -109,14 +113,11 @@
           }
 
           statusDiv.innerText = `送信完了！ 判定: ${congestionText} (${avgCount}人) [次回計測中...]`;
-
-          // バッファリセット
-          countBuffer = [];
         }
 
       } catch (err) {
         console.error('解析/送信エラー:', err);
-        statusDiv.innerText = `エラー発生: ${err.message}`;
+        statusDiv.innerText = `送信エラー: ${err.message} (次回の3分計測を継続します)`;
       }
     }
 
