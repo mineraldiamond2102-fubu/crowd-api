@@ -13,6 +13,43 @@
   <!-- ブラウザ内でAI物体検出を行うライブラリ -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <script>
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbx2Iphz0RxqttxjymoRCvo7vdKUMg9TJ31K97QlerFP-uxmSAjB8uVTU9Oe-QpODnPoQQ/exec";
+    
+    async function postCongestion(className, congestion, notice = "", reopenTime = "") {
+      try {
+        const params = new URLSearchParams({
+          className: className,
+          congestion: congestion,
+          notice: notice,
+          reopenTime: reopenTime
+        });
+    
+        const response = await fetch(GAS_URL, {
+          method: "POST",
+          body: params
+        });
+    
+        if (!response.ok) {
+          throw new Error(`HTTPエラー: ${response.status}`);
+        }
+    
+        const result = await response.text();
+    
+        // GAS側から "OK" 以外が返った場合もエラー扱いにする
+        if (result.trim() !== "OK") {
+          throw new Error(result || "GASから正常な応答がありませんでした");
+        }
+    
+        return true;
+    
+      } catch (error) {
+        console.error(error);
+        alert("送信に失敗しました。\n" + error.message);
+        return false;
+      }
+    }
+  </script>
 </head>
 <body>
   <h2>混雑状況自動判定・送信カメラ</h2>
