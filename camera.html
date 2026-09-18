@@ -127,6 +127,7 @@
 
           statusDiv.innerText = `過去3分間の平均 (${avgCount}人 / ${congestionText}) を送信中...`;
 
+/*=====================
           // 3. URLSearchParams 形式でデータを生成してPOST送信
           const params = new URLSearchParams({
             className: CLASS_NAME,
@@ -148,7 +149,9 @@
           if (result.trim() !== "OK") {
             throw new Error(result || "GASから正常な応答がありませんでした");
           }
-
+================================*/
+          postCongestion("9年9組", congestionText, "","");
+          
           statusDiv.innerText = `送信完了！ 判定: ${congestionText} (${avgCount}人) [次回計測中...]`;
         }
 
