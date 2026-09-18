@@ -150,7 +150,7 @@
             throw new Error(result || "GASから正常な応答がありませんでした");
           }
 ================================*/
-          postCongestion("9年9組", congestionText, "","");
+          postCongestion(CLASS_NAME, congestionText, "","");
           
           statusDiv.innerText = `送信完了！ 判定: ${congestionText} (${avgCount}人) [次回計測中...]`;
         }
