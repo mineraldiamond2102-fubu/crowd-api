@@ -118,7 +118,7 @@
           countBuffer = [];
 
           // 人数から混雑度テキストを判定
-          let congestionText = "空いている";
+          let congestionText = "空き";
           if (avgCount >= THRESHOLD_CROWDED) {
             congestionText = "混雑";
           } else if (avgCount >= THRESHOLD_SLIGHTLY_CROWDED) {
